@@ -10,6 +10,7 @@ def load_config
     @secret_access_key = config['s3_info']['secret_access_key']
     @bucket = config['s3_info']['bucket']
 
+    # set sync dir based on config.
     @sync_dir = config['s3_info']['sync_dir']
     Dir.chdir(Dir.pwd + '/' + @sync_dir)
 
@@ -47,6 +48,10 @@ def get_file(file_name)
             file.write(chunk)
         end
     end
+end
+
+def rename_file(old_name, new_name)
+    @s3_bucket.objects[old_name].move_to(new_name)
 end
 
 def delete_file(file_name)
