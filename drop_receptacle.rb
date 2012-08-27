@@ -22,14 +22,26 @@ def load_config
     @s3_bucket = @s3.buckets[@bucket]
 end
 
-def list_files
-    @s3.buckets[@bucket].objects.each do |obj|
+def load_local_files
+    d = Dir.open(Dir.pwd)
+    @local_files ||= {}
+    d.each do |file|
+        if file != '.' && file != '..' && File.file?(file)
+            file_path = Dir.pwd + '/' + file
+            hash = %x[md5 #{file_path}].split('=')[1].strip
+            modified = File.stat(file).mtime
+            @local_files[hash] = {:name => file,
+                                  :modified => modified}
+        end
+    end
+end
+
+def load_s3_files
+    @s3_files ||= {}
+    @s3_bucket.objects.each do |obj|
         head = obj.head
-        puts head.etag
-        puts head.last_modified
-        #puts "file: #{obj.key}"
-        #puts "content-length: #{obj.content_length}"
-        #puts "md5: #{obj.etag}"
+        @s3_files[head.etag] = {:name => obj.key,
+                                :modified => head.last_modified}
     end
 end
 
@@ -60,8 +72,18 @@ def delete_file(file_name)
     puts "Deleting file #{file_name} from bucket #{@bucket}"
 end
 
+
+# compare local files to the s3 files and make the appropriate changes.
+def sync_files
+
+end
+
 load_config
 
-get_file('readme.txt')
+load_local_files
+load_s3_files
+puts @local_files
+puts @s3_files
+#get_file('readme.txt')
 #list_files
 #upload_file('billstripe/readme.txt')
