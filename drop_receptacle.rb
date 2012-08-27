@@ -19,7 +19,11 @@ def load_config
       :secret_access_key => @secret_access_key
     )
     @s3 = AWS::S3.new
-    @s3_bucket = @s3.buckets[@bucket]
+    begin
+        @s3_bucket = @s3.buckets[@bucket]
+    rescue
+        puts "Error loading bucket #{@bucket}."
+    end
 end
 
 def load_local_files
@@ -38,52 +42,71 @@ end
 
 def load_s3_files
     @s3_files ||= {}
-    @s3_bucket.objects.each do |obj|
-        head = obj.head
-        @s3_files[head.etag] = {:name => obj.key,
-                                :modified => head.last_modified}
+    begin
+        @s3_bucket.objects.each do |obj|
+            head = obj.head
+            @s3_files[head.etag] = {:name => obj.key,
+                                    :modified => head.last_modified}
+        end
+    rescue
+        puts "Error loading file information from bucket #{@bucket}."
     end
 end
 
 def upload_file(file_name)
     key = File.basename(file_name)
-    @s3_bucket.objects[key].write(:file => file_name)
-    puts "Uploading file #{file_name} to bucket #{@bucket}."
+    begin
+        @s3_bucket.objects[key].write(:file => file_name)
+        puts "Uploading file #{file_name} to bucket #{@bucket}."
+    rescue
+        puts "Error uploading #{file_name} to bucket #{@bucket}."
+    end
 end
 
 def get_file(file_name)
     key = File.basename(file_name)
-    @s3_bucket.objects[key].read
-    File.open(file_name, 'w') do |file|
-        puts "Downloading #{file_name} from bucket #{@bucket}"
-        @s3_bucket.objects[key].read do |chunk|
-            file.write(chunk)
+    begin
+        File.open(file_name, 'w') do |file|
+            begin
+                puts "Downloading #{file_name} from bucket #{@bucket}"
+                @s3_bucket.objects[key].read do |chunk|
+                    file.write(chunk)
+                end
+            rescue
+                puts "Error downloading #{file_name} from s3"
+            end
         end
+    rescue
+        puts "Error opening #{file_name}"
     end
 end
 
 def rename_file(old_name, new_name)
-    @s3_bucket.objects[old_name].move_to(new_name)
+    begin
+        @s3_bucket.objects[old_name].move_to(new_name)
+        puts "Renaming #{old_name} to #{new_name}"
+    rescue
+        puts "Error renaming #{old_name} to #{new_name}"
+    end
 end
 
 def delete_file(file_name)
     key = File.basename(file_name)
-    @s3_bucket.objects[key].delete
-    puts "Deleting file #{file_name} from bucket #{@bucket}"
+    begin
+        @s3_bucket.objects[key].delete
+        puts "Deleting file #{file_name} from bucket #{@bucket}"
+    rescue
+        puts "Error deleting #{file_name} from bucket #{@bucket}"
+    end
 end
 
 
 # compare local files to the s3 files and make the appropriate changes.
 def sync_files
+    load_local_files
+    load_s3_files
 
+    # do comparison of local files and s3 files to determine actions
 end
 
 load_config
-
-load_local_files
-load_s3_files
-puts @local_files
-puts @s3_files
-#get_file('readme.txt')
-#list_files
-#upload_file('billstripe/readme.txt')
