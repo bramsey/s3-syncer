@@ -18,37 +18,66 @@ class DirectoryWatcher
     loop do
       curr_dir_state = LocalDirectory.load_state(@base_path)
       compare_states(prev_dir_state, curr_dir_state)
+      prev_dir_state = curr_dir_state
 
-      sleep 10
+      sleep 1
     end
   end
 
   private
 
-    # returns an array of the elements in hash not present in other_hash
-    def difference(hash, other_hash)
-      hash.each_key.to_a.reject {|key| other_hash[key]}.map {|key| hash[key]}
+    # returns an array of the elements in collection not present in other_collection
+    def difference(collection, other_collection)
+      if collection.is_a?(Hash) && other_collection.is_a?(Hash)
+        keys = collection.each_key.to_a
+        return keys.reject {|key| other_collection[key]}.map {|key| collection[key]}
+      elsif collection.is_a?(Array) && other_collection.is_a?(Array) 
+        return collection.reject {|item| other_collection.include?(item)}
+      end
+      [] # incompatible collections passed
     end
 
-    # returns an array of the elements in hash also present in other_hash
-    def intersection(hash, other_hash)
-      hash.each_key.to_a.select {|key| other_hash[key]}.map {|key| hash[key]}
+    # returns an array of the elements in collection also present in other_collection
+    def intersection(collection, other_collection)
+      if collection.is_a?(Hash) && other_collection.is_a?(Hash)
+        keys = collection.each_key.to_a
+        return keys.select {|key| other_collection[key]}.map {|key| collection[key]}
+      elsif collection.is_a?(Array) && other_collection.is_a?(Array) 
+        return collection.select {|item| other_collection.include?(item)}
+      end
+      [] # incompatible collections passed
     end
 
     def compare_states(prev, curr)
       new_names = difference(curr[:names], prev[:names])
       new_etags = difference(curr[:etags], prev[:etags])
       files_to_add = intersection(new_names, new_etags)
+      unless files_to_add.empty?
+        puts "files to add: "
+        puts files_to_add
+      end
 
       removed_names = difference(prev[:names], curr[:names])
       removed_etags = difference(prev[:etags], curr[:etags])
       files_to_remove = intersection(removed_names, removed_etags)
+      unless files_to_remove.empty?
+        puts "files to remove: "
+        puts files_to_remove
+      end
 
       unchanged_etags = intersection(prev[:etags], curr[:etags])
       unchanged_names = intersection(prev[:names], curr[:names])
-      files_to_rename = difference(unchaged_etags, unchanged_names)
+      files_to_rename = difference(unchanged_etags, unchanged_names)
+      unless files_to_rename.empty?
+        puts "files to rename: "
+        puts files_to_rename
+      end
 
       files_to_modify = difference(unchanged_names, unchanged_etags)
+      unless files_to_modify.empty?
+        puts "files to modify: "
+        puts files_to_modify
+      end
     end
 
 end
@@ -160,3 +189,5 @@ end
 
 
 load_config
+watcher = DirectoryWatcher.new(Dir.pwd)
+watcher.run
