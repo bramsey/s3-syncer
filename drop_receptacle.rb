@@ -32,7 +32,7 @@ class DirectoryWatcher
 
     # returns an array of the elements in hash also present in other_hash
     def intersection(hash, other_hash)
-
+      hash.each_key.to_a.select {|key| other_hash[key]}.map {|key| hash[key]}
     end
 
     def compare_states(prev, curr)
