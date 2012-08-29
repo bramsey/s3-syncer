@@ -204,7 +204,8 @@ end
 
 
 load_config
-#local_directory = LocalDirectory.new(Dir.pwd)
-bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
-watcher = Watcher.new(bucket, 30)
-watcher.run
+local_directory = LocalDirectory.new(Dir.pwd)
+#bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
+local_watcher = Watcher.new(local_directory, 1)
+#s3_watcher = Watcher.new(bucket, 30)
+local_watcher.run
