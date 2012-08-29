@@ -20,7 +20,7 @@ class DirectoryWatcher
     prev_dir_state = {}
 
     loop do
-      curr_dir_state = LocalDirectory.load_files(@base_path)
+      curr_dir_state = LocalDirectory.load_state(@base_path)
       compare_states(prev_dir_state, curr_dir_state)
 
       sleep 10
@@ -30,8 +30,8 @@ end
 
 class LocalDirectory
 
-  def LocalDirectory.load_files(dir_path)
-    file_info = {}
+  def LocalDirectory.load_state(dir_path)
+    dir_state = {:names => {}, :hashes => {}}
     prev_dir = Dir.pwd
     Dir.chdir(dir_path)
     files = Dir.glob('**/*')
@@ -41,14 +41,15 @@ class LocalDirectory
         file_path = Dir.pwd + '/' + file
         hash = %x[md5 #{file_path}].split('=')[1].strip
         modified = File.stat(file).mtime
-        file_info[hash] = {:name => file,
-                           :modified => modified}
+        file_info = {:name => file, :hash => hash, :modified => modified}
+        dir_state[:names][file_info[:name]] = file_info
+        dir_state[:hashes][file_info[:hash]] = file_info
       end
     end
 
     Dir.chdir(prev_dir)
 
-    file_info
+    dir_state
   end
 end
 
@@ -133,14 +134,4 @@ def delete_file(file_name)
 end
 
 
-# compare local files to the s3 files and make the appropriate changes.
-def sync_files
-  load_local_files
-  load_s3_files
-
-  # do comparison of local files and s3 files to determine actions
-end
-
 load_config
-load_local_files
-
