@@ -13,7 +13,7 @@ class DirectoryWatcher
   end
 
   def run
-    prev_dir_state = {}
+    prev_dir_state = {:names => {}, :etags => {}}
 
     loop do
       curr_dir_state = LocalDirectory.load_state(@base_path)
@@ -36,13 +36,19 @@ class DirectoryWatcher
     end
 
     def compare_states(prev, curr)
-      files_to_add = difference(curr, prev)
-      files_to_remove = difference(prev, curr)
-      files_to_rename = difference(intersection(prev[:etags], curr[:etags]),
-                                   intersection(prev[:names], curr[:names]))
-      files_to_modify = difference(intersection(prev[:names], curr[:names]),
-                                   intersection(prev[:etags], curr[:etags])
+      new_names = difference(curr[:names], prev[:names])
+      new_etags = difference(curr[:etags], prev[:etags])
+      files_to_add = intersection(new_names, new_etags)
 
+      removed_names = difference(prev[:names], curr[:names])
+      removed_etags = difference(prev[:etags], curr[:etags])
+      files_to_remove = intersection(removed_names, removed_etags)
+
+      unchanged_etags = intersection(prev[:etags], curr[:etags])
+      unchanged_names = intersection(prev[:names], curr[:names])
+      files_to_rename = difference(unchaged_etags, unchanged_names)
+
+      files_to_modify = difference(unchanged_names, unchanged_etags)
     end
 
 end
