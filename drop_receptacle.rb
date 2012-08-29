@@ -27,10 +27,10 @@ def load_config
 end
 
 def load_local_files
-    d = Dir.open(Dir.pwd)
     @local_files ||= {}
-    d.each do |file|
-        if file != '.' && file != '..' && File.file?(file)
+    files = Dir.glob('**/*')
+    files.each do |file|
+        if File.file?(file)
             file_path = Dir.pwd + '/' + file
             hash = %x[md5 #{file_path}].split('=')[1].strip
             modified = File.stat(file).mtime
@@ -54,9 +54,8 @@ def load_s3_files
 end
 
 def upload_file(file_name)
-    key = File.basename(file_name)
     begin
-        @s3_bucket.objects[key].write(:file => file_name)
+        @s3_bucket.objects[file_name].write(:file => file_name)
         puts "Uploading file #{file_name} to bucket #{@bucket}."
     rescue
         puts "Error uploading #{file_name} to bucket #{@bucket}."
@@ -64,12 +63,11 @@ def upload_file(file_name)
 end
 
 def get_file(file_name)
-    key = File.basename(file_name)
     begin
         File.open(file_name, 'w') do |file|
             begin
                 puts "Downloading #{file_name} from bucket #{@bucket}"
-                @s3_bucket.objects[key].read do |chunk|
+                @s3_bucket.objects[file_name].read do |chunk|
                     file.write(chunk)
                 end
             rescue
@@ -91,9 +89,8 @@ def rename_file(old_name, new_name)
 end
 
 def delete_file(file_name)
-    key = File.basename(file_name)
     begin
-        @s3_bucket.objects[key].delete
+        @s3_bucket.objects[file_name].delete
         puts "Deleting file #{file_name} from bucket #{@bucket}"
     rescue
         puts "Error deleting #{file_name} from bucket #{@bucket}"
@@ -110,3 +107,8 @@ def sync_files
 end
 
 load_config
+load_local_files
+
+@local_files.each_value do |file|
+    puts file
+end
