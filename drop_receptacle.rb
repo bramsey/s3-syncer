@@ -111,41 +111,52 @@ class LocalDirectory
   end
 end
 
+class S3Bucket
+
+  def initialize(bucket_name, access_key_id, secret_access_key)
+    @bucket_name = bucket_name
+    AWS.config(
+      :access_key_id =>  access_key_id, 
+      :secret_access_key => secret_access_key
+    )
+    @s3_instance = AWS::S3.new
+    begin
+      @bucket = @s3_instance.buckets[@bucket_name]
+    rescue
+      puts "Error loading bucket #{@bucket_name}."
+    end
+  end
+
+  def load_state
+    dir_state = {:names => {}, :etags => {}}
+    begin
+      @bucket.objects.each do |obj|
+        head = obj.head
+        file_info = {:name => obj.key, :etag => head.etag, :modified => head.last_modified} 
+        dir_state[:names][file_info[:name]] = file_info
+        dir_state[:etags][file_info[:etag]] = file_info
+      end
+    rescue
+      puts "Error loading file information from bucket #{@bucket_name}."
+    end
+
+    dir_state
+  end
+end
+
 def load_config
   config = YAML.load_file('config.yaml')
   @access_key_id = config['s3_info']['access_key_id']
   @secret_access_key = config['s3_info']['secret_access_key']
-  @bucket = config['s3_info']['bucket']
+  @bucket_name = config['s3_info']['bucket']
 
-  # set sync dir based on config.
-  @sync_dir = config['s3_info']['sync_dir']
-  Dir.chdir(Dir.pwd + '/' + @sync_dir)
+  # set local sync dir based on config.
+  sync_dir = config['s3_info']['sync_dir']
+  Dir.chdir(Dir.pwd + '/' + sync_dir)
 
-  AWS.config(
-    :access_key_id =>  @access_key_id, 
-    :secret_access_key => @secret_access_key
-  )
-  @s3 = AWS::S3.new
-  begin
-    @s3_bucket = @s3.buckets[@bucket]
-  rescue
-    puts "Error loading bucket #{@bucket}."
-  end
 end
 
 
-def load_s3_files
-  @s3_files ||= {}
-  begin
-    @s3_bucket.objects.each do |obj|
-      head = obj.head
-      @s3_files[head.etag] = {:name => obj.key,
-        :modified => head.last_modified}
-    end
-  rescue
-    puts "Error loading file information from bucket #{@bucket}."
-  end
-end
 
 def upload_file(file_name)
   begin
@@ -193,6 +204,7 @@ end
 
 
 load_config
-local_directory = LocalDirectory.new(Dir.pwd)
-watcher = Watcher.new(local_directory, 1)
+#local_directory = LocalDirectory.new(Dir.pwd)
+bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
+watcher = Watcher.new(bucket, 30)
 watcher.run
