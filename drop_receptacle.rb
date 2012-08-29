@@ -5,22 +5,23 @@ require 'yaml'
 require 'aws-sdk'
 require 'observer'
 
-class DirectoryWatcher
+class Watcher
   include Observable
 
-  def initialize(path)
-    @base_path = path
+  def initialize(directory, interval)
+    @watched_directory = directory
+    @interval = interval
   end
 
   def run
     prev_dir_state = {:names => {}, :etags => {}}
 
     loop do
-      curr_dir_state = LocalDirectory.load_state(@base_path)
+      curr_dir_state = @watched_directory.load_state
       compare_states(prev_dir_state, curr_dir_state)
       prev_dir_state = curr_dir_state
 
-      sleep 1
+      sleep @interval
     end
   end
 
@@ -79,15 +80,18 @@ class DirectoryWatcher
         puts files_to_modify
       end
     end
-
 end
 
 class LocalDirectory
 
-  def LocalDirectory.load_state(dir_path)
+  def initialize(path)
+    @dir_path = path
+  end
+
+  def load_state
     dir_state = {:names => {}, :etags => {}}
     prev_dir = Dir.pwd
-    Dir.chdir(dir_path)
+    Dir.chdir(@dir_path)
     files = Dir.glob('**/*')
 
     files.each do |file|
@@ -189,5 +193,6 @@ end
 
 
 load_config
-watcher = DirectoryWatcher.new(Dir.pwd)
+local_directory = LocalDirectory.new(Dir.pwd)
+watcher = Watcher.new(local_directory, 1)
 watcher.run
