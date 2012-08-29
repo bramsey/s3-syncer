@@ -3,6 +3,54 @@
 require 'rubygems'
 require 'yaml'
 require 'aws-sdk'
+require 'observer'
+
+class DirectoryWatcher
+  include Observable
+
+  def initialize(path)
+    @base_path = path
+  end
+
+  def compare_states(prev, curr)
+
+  end
+
+  def run
+    prev_dir_state = {}
+
+    loop do
+      curr_dir_state = LocalDirectory.load_files(@base_path)
+      compare_states(prev_dir_state, curr_dir_state)
+
+      sleep 10
+    end
+  end
+end
+
+class LocalDirectory
+
+  def LocalDirectory.load_files(dir_path)
+    file_info = {}
+    prev_dir = Dir.pwd
+    Dir.chdir(dir_path)
+    files = Dir.glob('**/*')
+
+    files.each do |file|
+      if File.file?(file) && File.readable?(file)
+        file_path = Dir.pwd + '/' + file
+        hash = %x[md5 #{file_path}].split('=')[1].strip
+        modified = File.stat(file).mtime
+        file_info[hash] = {:name => file,
+                           :modified => modified}
+      end
+    end
+
+    Dir.chdir(prev_dir)
+
+    file_info
+  end
+end
 
 def load_config
   config = YAML.load_file('config.yaml')
@@ -26,19 +74,6 @@ def load_config
   end
 end
 
-def load_local_files
-  @local_files ||= {}
-  files = Dir.glob('**/*')
-  files.each do |file|
-    if File.file?(file) && File.readable?(file)
-      file_path = Dir.pwd + '/' + file
-      hash = %x[md5 #{file_path}].split('=')[1].strip
-      modified = File.stat(file).mtime
-      @local_files[hash] = {:name => file,
-        :modified => modified}
-    end
-  end
-end
 
 def load_s3_files
   @s3_files ||= {}
