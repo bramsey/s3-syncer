@@ -27,7 +27,7 @@ class DirectoryWatcher
 
     # returns an array of the elements in hash not present in other_hash
     def difference(hash, other_hash)
-
+      hash.each_key.to_a.reject {|key| other_hash[key]}.map {|key| hash[key]}
     end
 
     # returns an array of the elements in hash also present in other_hash
