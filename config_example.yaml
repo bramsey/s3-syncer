@@ -1,0 +1,5 @@
+s3_info:
+    access_key_id: [ access key id ]
+    secret_access_key: [ secret access key ]
+    bucket: [ bucket to sync with ] 
+    sync_dir: [ local directory to sync ]
