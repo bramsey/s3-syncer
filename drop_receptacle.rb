@@ -12,10 +12,6 @@ class DirectoryWatcher
     @base_path = path
   end
 
-  def compare_states(prev, curr)
-
-  end
-
   def run
     prev_dir_state = {}
 
@@ -26,12 +22,35 @@ class DirectoryWatcher
       sleep 10
     end
   end
+
+  private
+
+    # returns an array of the elements in hash not present in other_hash
+    def difference(hash, other_hash)
+
+    end
+
+    # returns an array of the elements in hash also present in other_hash
+    def intersection(hash, other_hash)
+
+    end
+
+    def compare_states(prev, curr)
+      files_to_add = difference(curr, prev)
+      files_to_remove = difference(prev, curr)
+      files_to_rename = difference(intersection(prev[:etags], curr[:etags]),
+                                   intersection(prev[:names], curr[:names]))
+      files_to_modify = difference(intersection(prev[:names], curr[:names]),
+                                   intersection(prev[:etags], curr[:etags])
+
+    end
+
 end
 
 class LocalDirectory
 
   def LocalDirectory.load_state(dir_path)
-    dir_state = {:names => {}, :hashes => {}}
+    dir_state = {:names => {}, :etags => {}}
     prev_dir = Dir.pwd
     Dir.chdir(dir_path)
     files = Dir.glob('**/*')
@@ -39,11 +58,11 @@ class LocalDirectory
     files.each do |file|
       if File.file?(file) && File.readable?(file)
         file_path = Dir.pwd + '/' + file
-        hash = %x[md5 #{file_path}].split('=')[1].strip
+        etag = %x[md5 #{file_path}].split('=')[1].strip
         modified = File.stat(file).mtime
-        file_info = {:name => file, :hash => hash, :modified => modified}
+        file_info = {:name => file, :etag => etag, :modified => modified}
         dir_state[:names][file_info[:name]] = file_info
-        dir_state[:hashes][file_info[:hash]] = file_info
+        dir_state[:etags][file_info[:etag]] = file_info
       end
     end
 
