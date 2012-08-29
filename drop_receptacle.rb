@@ -30,7 +30,7 @@ def load_local_files
   @local_files ||= {}
   files = Dir.glob('**/*')
   files.each do |file|
-    if File.file?(file)
+    if File.file?(file) && File.readable?(file)
       file_path = Dir.pwd + '/' + file
       hash = %x[md5 #{file_path}].split('=')[1].strip
       modified = File.stat(file).mtime
@@ -109,6 +109,3 @@ end
 load_config
 load_local_files
 
-@local_files.each_value do |file|
-  puts file
-end
