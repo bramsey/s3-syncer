@@ -3,20 +3,23 @@
 require 'rubygems'
 require 'yaml'
 require 'aws-sdk'
+require 'json'
 
 class Watcher
 
-  def initialize(directory, interval)
+  def initialize(directory, initial_remote_state, interval)
     @watched_directory = directory
+    @initial_state = initial_remote_state || {:names => {}, :etags => {}}
     @interval = interval
   end
 
   def run
-    prev_dir_state = {:names => {}, :etags => {}}
+    prev_dir_state = @initial_state
 
     loop do
       curr_dir_state = @watched_directory.load_state
-      compare_states(prev_dir_state, curr_dir_state)
+      actions = compare_states(prev_dir_state, curr_dir_state)
+      queue_actions(actions)
       prev_dir_state = curr_dir_state
 
       sleep @interval
@@ -24,6 +27,13 @@ class Watcher
   end
 
   private
+
+    def queue_actions(actions)
+      actions.each do |action|
+        #send_to_queue(action.to_json)
+        puts action.to_json
+      end
+    end
 
     # returns an array of the elements in collection not present in other_collection
     def difference(collection, other_collection)
@@ -48,35 +58,46 @@ class Watcher
     end
 
     def compare_states(prev, curr)
+      actions = []
+
       new_names = difference(curr[:names], prev[:names])
       new_etags = difference(curr[:etags], prev[:etags])
       files_to_add = intersection(new_names, new_etags)
       unless files_to_add.empty?
-        puts "files to add: "
-        puts files_to_add
+        files_to_add.each do |file|
+          actions.push({:action => :add, :file => file})
+        end
       end
 
       removed_names = difference(prev[:names], curr[:names])
       removed_etags = difference(prev[:etags], curr[:etags])
       files_to_remove = intersection(removed_names, removed_etags)
       unless files_to_remove.empty?
-        puts "files to remove: "
-        puts files_to_remove
+        files_to_remove.each do |file|
+          actions.push({:action => :remove, :name => file[:name]})
+        end
       end
 
       unchanged_etags = intersection(prev[:etags], curr[:etags])
       unchanged_names = intersection(prev[:names], curr[:names])
       files_to_rename = difference(unchanged_etags, unchanged_names)
       unless files_to_rename.empty?
-        puts "files to rename: "
-        puts files_to_rename
+        files_to_rename.each do |file|
+          old_name = prev[:etags][file[:etag]][:name]
+          new_name = curr[:etags][file[:etag]][:name]
+          actions.push({:action => :rename,
+                        :from => old_name,
+                        :to => new_name})
+        end
       end
 
       files_to_modify = difference(unchanged_names, unchanged_etags)
       unless files_to_modify.empty?
-        puts "files to modify: "
-        puts files_to_modify
+        files_to_modify.each do |file|
+          actions.push({:action => :add, :file => file})
+        end
       end
+      actions
     end
 end
 
@@ -203,7 +224,7 @@ end
 
 load_config
 local_directory = LocalDirectory.new(Dir.pwd)
-#bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
-local_watcher = Watcher.new(local_directory, 1)
+bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
+local_watcher = Watcher.new(local_directory, bucket.load_state, 1)
 #s3_watcher = Watcher.new(bucket, 30)
 local_watcher.run
