@@ -3,10 +3,8 @@
 require 'rubygems'
 require 'yaml'
 require 'aws-sdk'
-require 'observer'
 
 class Watcher
-  include Observable
 
   def initialize(directory, interval)
     @watched_directory = directory
