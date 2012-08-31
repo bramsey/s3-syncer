@@ -38,7 +38,7 @@ class Watcher
       unless actions.empty?
         changed # trigger observer change
         actions.each do |action|
-          notifiy_observers_(action.to_json)
+          notify_observers(action.to_json)
         end
       end
     end
@@ -68,42 +68,38 @@ class Watcher
     def compare_states(prev, curr)
       actions = []
 
+      # determine add actions
       new_names = difference(curr['names'], prev['names'])
       new_etags = difference(curr['etags'], prev['etags'])
       files_to_add = intersection(new_names, new_etags)
-      unless files_to_add.empty?
-        files_to_add.each do |file|
-          actions.push({'action' => 'add', 'file' => file})
-        end
+      files_to_add.each do |file|
+        actions.push({'action' => 'add', 'file' => file})
       end
 
+      # determine remove actions
       removed_names = difference(prev['names'], curr['names'])
       removed_etags = difference(prev['etags'], curr['etags'])
       files_to_remove = intersection(removed_names, removed_etags)
-      unless files_to_remove.empty?
-        files_to_remove.each do |file|
-          actions.push({'action' => 'remove', 'name' => file['name']})
-        end
+      files_to_remove.each do |file|
+        actions.push({'action' => 'remove', 'name' => file['name']})
       end
 
+      # determine rename actions
       unchanged_etags = intersection(prev['etags'], curr['etags'])
       unchanged_names = intersection(prev['names'], curr['names'])
       files_to_rename = difference(unchanged_etags, unchanged_names)
-      unless files_to_rename.empty?
-        files_to_rename.each do |file|
-          old_name = prev['etags'][file['etag']]['name']
-          new_name = curr['etags'][file['etag']]['name']
-          actions.push({'action' => 'rename',
-                        'from' => old_name,
-                        'to' => new_name})
-        end
+      files_to_rename.each do |file|
+        old_name = prev['etags'][file['etag']]['name']
+        new_name = curr['etags'][file['etag']]['name']
+        actions.push({'action' => 'rename',
+                      'from' => old_name,
+                      'to' => new_name})
       end
 
+      # determine modify actions
       files_to_modify = difference(unchanged_names, unchanged_etags)
-      unless files_to_modify.empty?
-        files_to_modify.each do |file|
-          actions.push({'action' => 'add', 'file' => file})
-        end
+      files_to_modify.each do |file|
+        actions.push({'action' => 'add', 'file' => file})
       end
       actions
     end
@@ -159,7 +155,8 @@ class S3Bucket
     begin
       @bucket.objects.each do |obj|
         head = obj.head
-        file_info = {'name' => obj.key, 'etag' => head.etag, 'modified' => head.last_modified} 
+        etag = String.class_eval(head.etag) # remove escaping from s3 strings
+        file_info = {'name' => obj.key, 'etag' => etag, 'modified' => head.last_modified} 
         dir_state['names'][file_info['name']] = file_info
         dir_state['etags'][file_info['etag']] = file_info
       end
@@ -170,16 +167,29 @@ class S3Bucket
     dir_state
   end
 
-  def add_file(file_name)
+  def add_file(file_info)
+    file_name = file_info['name']
+    puts "Uploading file #{file_name} to bucket #{@bucket_name}."
     begin
-      puts "Uploading file #{file_name} to bucket #{@bucket_name}."
-      file = File.open(file_name, 'r')
       obj = @bucket.objects[file_name]
-      obj.write(:content_length => file.size) do |buffer, bytes|
-        buffer.write(file.read(bytes))
+      etag = obj.exists? ? obj.etag : nil
+      unless etag == file_info['etag']
+        begin
+            #obj.write(:file => file_name)
+            file = File.open(file_name, 'r')
+            obj.write(:content_length => file.size) do |buffer, bytes|
+              buffer.write(file.read(bytes))
+            end
+            file.close
+            puts "Done uploading file #{file_name} to bucket #{@bucket_name}"
+        rescue
+          puts "Error uploading #{file_name} to bucket #{@bucket_name}."
+        end
+      else
+        puts "obj unchanged"
       end
     rescue
-      puts "Error uploading #{file_name} to bucket #{@bucket_name}."
+      puts "Error reading #{file_name} from bucket #{@bucket_name}."
     end
   end
 
@@ -206,13 +216,22 @@ class Dispatcher
 
   def initialize(watcher, bucket)
     watcher.add_observer(self)
-    @s3_bucket = bucket
+    @bucket = bucket
   end
 
   def update(json_action)
     action = JSON.parse(json_action)
 
-    # do appropriate action here in new thread
+    if action && action['action']
+      case action['action']
+      when 'add'
+        @bucket.add_file(action['file'])
+      when 'rename'
+        @bucket.rename_file(action['from'], action['to'])
+      when 'remove'
+        @bucket.remove_file(action['name'])
+      end
+    end
   end
 end
 
@@ -226,16 +245,13 @@ def load_config
   # set local sync dir based on config.
   sync_dir = config['s3_info']['sync_dir']
   Dir.chdir(Dir.pwd + '/' + sync_dir)
-
 end
-
-
-
 
 load_config
 local_directory = LocalDirectory.new(Dir.pwd)
 bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
 bucket_state = bucket.load_state.to_json
 local_watcher = Watcher.new(local_directory, bucket_state, 1)
-#s3_watcher = Watcher.new(bucket, 30)
+s3_dispatcher = Dispatcher.new(local_watcher, bucket)
+
 local_watcher.run
