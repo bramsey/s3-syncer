@@ -3,9 +3,11 @@
 require 'rubygems'
 require 'yaml'
 require 'aws-sdk'
+require 'observer'
 require 'json'
 
 class Watcher
+  include Observable 
 
   def initialize(directory, initial_remote_state, interval)
     @watched_directory = directory
@@ -14,7 +16,6 @@ class Watcher
     rescue
       @initial_state = {'names' => {}, 'etags' => {}}
     end
-    puts @initial_state
     @interval = interval
   end
 
@@ -34,9 +35,11 @@ class Watcher
   private
 
     def queue_actions(actions)
-      actions.each do |action|
-        #send_to_queue(action.to_json)
-        puts action.to_json
+      unless actions.empty?
+        changed # trigger observer change
+        actions.each do |action|
+          notifiy_observers_(action.to_json)
+        end
       end
     end
 
@@ -166,7 +169,53 @@ class S3Bucket
 
     dir_state
   end
+
+  def add_file(file_name)
+    begin
+      puts "Uploading file #{file_name} to bucket #{@bucket_name}."
+      file = File.open(file_name, 'r')
+      obj = @bucket.objects[file_name]
+      obj.write(:content_length => file.size) do |buffer, bytes|
+        buffer.write(file.read(bytes))
+      end
+    rescue
+      puts "Error uploading #{file_name} to bucket #{@bucket_name}."
+    end
+  end
+
+  def rename_file(old_name, new_name)
+    begin
+      puts "Renaming #{old_name} to #{new_name}"
+      @bucket.objects[old_name].move_to(new_name)
+    rescue
+      puts "Error renaming #{old_name} to #{new_name}"
+    end
+  end
+
+  def remove_file(file_name)
+    begin
+      puts "Deleting file #{file_name} from bucket #{@bucket_name}"
+      @bucket.objects[file_name].delete
+    rescue
+      puts "Error deleting #{file_name} from bucket #{@bucket_name}"
+    end
+  end
 end
+
+class Dispatcher
+
+  def initialize(watcher, bucket)
+    watcher.add_observer(self)
+    @s3_bucket = bucket
+  end
+
+  def update(json_action)
+    action = JSON.parse(json_action)
+
+    # do appropriate action here in new thread
+  end
+end
+
 
 def load_config
   config = YAML.load_file('config.yaml')
@@ -181,50 +230,6 @@ def load_config
 end
 
 
-
-def upload_file(file_name)
-  begin
-    @s3_bucket.objects[file_name].write('file' => file_name)
-    puts "Uploading file #{file_name} to bucket #{@bucket}."
-  rescue
-    puts "Error uploading #{file_name} to bucket #{@bucket}."
-  end
-end
-
-def get_file(file_name)
-  begin
-    File.open(file_name, 'w') do |file|
-      begin
-        puts "Downloading #{file_name} from bucket #{@bucket}"
-        @s3_bucket.objects[file_name].read do |chunk|
-          file.write(chunk)
-        end
-      rescue
-        puts "Error downloading #{file_name} from s3"
-      end
-    end
-  rescue
-    puts "Error opening #{file_name}"
-  end
-end
-
-def rename_file(old_name, new_name)
-  begin
-    @s3_bucket.objects[old_name].move_to(new_name)
-    puts "Renaming #{old_name} to #{new_name}"
-  rescue
-    puts "Error renaming #{old_name} to #{new_name}"
-  end
-end
-
-def delete_file(file_name)
-  begin
-    @s3_bucket.objects[file_name].delete
-    puts "Deleting file #{file_name} from bucket #{@bucket}"
-  rescue
-    puts "Error deleting #{file_name} from bucket #{@bucket}"
-  end
-end
 
 
 load_config
