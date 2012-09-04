@@ -21,6 +21,7 @@ class Watcher
 
   def run
     prev_dir_state = @initial_state
+    puts prev_dir_state
 
     loop do
       curr_dir_state = @watched_directory.load_state
@@ -69,11 +70,12 @@ class Watcher
       actions = []
 
       # determine add actions
-      new_names = difference(curr['names'], prev['names'])
       new_etags = difference(curr['etags'], prev['etags'])
-      files_to_add = intersection(new_names, new_etags)
+      files_to_add = new_etags
       files_to_add.each do |file|
-        actions.push({'action' => 'add', 'file' => file})
+        unless File.extname(file['name']) == '.inprogress'
+          actions.push({'action' => 'add', 'file' => file}) 
+        end
       end
 
       # determine remove actions
@@ -85,22 +87,19 @@ class Watcher
       end
 
       # determine rename actions
-      unchanged_etags = intersection(prev['etags'], curr['etags'])
-      unchanged_names = intersection(prev['names'], curr['names'])
-      files_to_rename = difference(unchanged_etags, unchanged_names)
+      unchanged_etags = intersection(curr['etags'], prev['etags'])
+      new_names = difference(curr['names'], prev['names'])
+      files_to_rename = intersection(new_names, unchanged_etags)
       files_to_rename.each do |file|
         old_name = prev['etags'][file['etag']]['name']
         new_name = curr['etags'][file['etag']]['name']
-        actions.push({'action' => 'rename',
-                      'from' => old_name,
-                      'to' => new_name})
+        unless File.extname(old_name) == '.inprogress'
+          actions.push({'action' => 'rename',
+                        'from' => old_name,
+                        'to' => new_name}) 
+        end
       end
 
-      # determine modify actions
-      files_to_modify = difference(unchanged_names, unchanged_etags)
-      files_to_modify.each do |file|
-        actions.push({'action' => 'add', 'file' => file})
-      end
       actions
     end
 end
@@ -120,7 +119,9 @@ class LocalDirectory
     files.each do |file|
       if File.file?(file) && File.readable?(file)
         file_path = Dir.pwd + '/' + file
-        etag = %x[md5 #{file_path}].split('=')[1].strip
+        md5_response = %x[md5 #{file_path}]
+        etag = md5_response.split('=')[1]
+        etag = etag ? etag.strip : etag
         modified = File.stat(file).mtime
         file_info = {'name' => file, 'etag' => etag, 'modified' => modified}
         dir_state['names'][file_info['name']] = file_info
@@ -223,14 +224,15 @@ class Dispatcher
     action = JSON.parse(json_action)
 
     if action && action['action']
-      case action['action']
-      when 'add'
-        @bucket.add_file(action['file'])
-      when 'rename'
-        @bucket.rename_file(action['from'], action['to'])
-      when 'remove'
-        @bucket.remove_file(action['name'])
-      end
+      #case action['action']
+      #when 'add'
+      #  @bucket.add_file(action['file'])
+      #when 'rename'
+      #  @bucket.rename_file(action['from'], action['to'])
+      #when 'remove'
+      #  @bucket.remove_file(action['name'])
+      #end
+      puts action
     end
   end
 end
@@ -250,8 +252,8 @@ end
 load_config
 local_directory = LocalDirectory.new(Dir.pwd)
 bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
-bucket_state = bucket.load_state.to_json
-local_watcher = Watcher.new(local_directory, bucket_state, 1)
+#bucket_state = bucket.load_state.to_json
+local_watcher = Watcher.new(local_directory, local_directory.load_state.to_json, 1)
 s3_dispatcher = Dispatcher.new(local_watcher, bucket)
 
 local_watcher.run
