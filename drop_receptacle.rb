@@ -73,7 +73,7 @@ class Watcher
       new_etags = difference(curr['etags'], prev['etags'])
       files_to_add = new_etags
       files_to_add.each do |file|
-        unless File.extname(file['name']) == '.inprogress'
+        unless File.extname(file['name']) == '.inprog'
           actions.push({'action' => 'add', 'file' => file}) 
         end
       end
@@ -93,7 +93,7 @@ class Watcher
       files_to_rename.each do |file|
         old_name = prev['etags'][file['etag']]['name']
         new_name = curr['etags'][file['etag']]['name']
-        unless File.extname(old_name) == '.inprogress'
+        unless File.extname(old_name) == '.inprog'
           actions.push({'action' => 'rename',
                         'from' => old_name,
                         'to' => new_name}) 
@@ -177,11 +177,13 @@ class S3Bucket
       unless etag == file_info['etag']
         begin
             #obj.write(:file => file_name)
+            obj = @bucket.objects[file_name + '.inprog']
             file = File.open(file_name, 'r')
             obj.write(:content_length => file.size) do |buffer, bytes|
               buffer.write(file.read(bytes))
             end
             file.close
+            obj.move_to(file_name)
             puts "Done uploading file #{file_name} to bucket #{@bucket_name}"
         rescue
           puts "Error uploading #{file_name} to bucket #{@bucket_name}."
