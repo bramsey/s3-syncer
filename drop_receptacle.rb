@@ -14,14 +14,13 @@ class Watcher
     begin
       @initial_state = JSON.parse(initial_remote_state) || {'names' => {}, 'etags' => {}}
     rescue
-      @initial_state = {'names' => {}, 'etags' => {}}
+      @initial_state = {'names' => {}, 'etags' => {}, 'ids' => {}}
     end
     @interval = interval
   end
 
   def run
     prev_dir_state = @initial_state
-    puts prev_dir_state
 
     loop do
       curr_dir_state = @watched_directory.load_state
@@ -38,9 +37,7 @@ class Watcher
     def queue_actions(actions)
       unless actions.empty?
         changed # trigger observer change
-        actions.each do |action|
-          notify_observers(action.to_json)
-        end
+        notify_observers(actions)
       end
     end
 
@@ -50,7 +47,7 @@ class Watcher
         keys = collection.each_key.to_a
         return keys.reject {|key| other_collection[key]}.map {|key| collection[key]}
       elsif collection.is_a?(Array) && other_collection.is_a?(Array) 
-        return collection.reject {|item| other_collection.include?(item)}
+        return collection - other_collection
       end
       [] # incompatible collections passed
     end
@@ -69,9 +66,26 @@ class Watcher
     def compare_states(prev, curr)
       actions = []
 
+      # determine rename actions
+      removed_names = difference(prev['names'], curr['names'])
+      new_names = difference(curr['names'], prev['names'])
+      new_name_hashes = new_names.map {|file| file['etag']}
+      removed_name_hashes = removed_names.map {|file| file['etag']}
+      files_to_rename = new_names.select {|file| removed_name_hashes.include?(file['etag'])}
+      renamed_files = removed_names.select {|file| new_name_hashes.include?(file['etag'])}
+      files_to_rename.each do |file|
+        old_name = removed_names.select {|old_file| old_file['etag'] == file['etag']}[0]['name']
+        new_name = file['name']
+        unless File.extname(old_name) == '.inprog'
+          actions.push({'action' => 'rename',
+                        'from' => old_name,
+                        'to' => new_name}) 
+        end
+      end
+
       # determine add actions
-      new_etags = difference(curr['etags'], prev['etags'])
-      files_to_add = new_etags
+      new_files = difference(curr['ids'], prev['ids'])
+      files_to_add = new_files - files_to_rename
       files_to_add.each do |file|
         unless File.extname(file['name']) == '.inprog'
           actions.push({'action' => 'add', 'file' => file}) 
@@ -79,26 +93,11 @@ class Watcher
       end
 
       # determine remove actions
-      removed_names = difference(prev['names'], curr['names'])
-      removed_etags = difference(prev['etags'], curr['etags'])
-      files_to_remove = intersection(removed_names, removed_etags)
+      files_to_remove = removed_names - renamed_files
       files_to_remove.each do |file|
         actions.push({'action' => 'remove', 'name' => file['name']})
       end
 
-      # determine rename actions
-      unchanged_etags = intersection(curr['etags'], prev['etags'])
-      new_names = difference(curr['names'], prev['names'])
-      files_to_rename = intersection(new_names, unchanged_etags)
-      files_to_rename.each do |file|
-        old_name = prev['etags'][file['etag']]['name']
-        new_name = curr['etags'][file['etag']]['name']
-        unless File.extname(old_name) == '.inprog'
-          actions.push({'action' => 'rename',
-                        'from' => old_name,
-                        'to' => new_name}) 
-        end
-      end
 
       actions
     end
@@ -111,7 +110,7 @@ class LocalDirectory
   end
 
   def load_state
-    dir_state = {'names' => {}, 'etags' => {}}
+    dir_state = {'names' => {}, 'etags' => {}, 'ids' => {}}
     prev_dir = Dir.pwd
     Dir.chdir(@dir_path)
     files = Dir.glob('**/*')
@@ -126,6 +125,7 @@ class LocalDirectory
         file_info = {'name' => file, 'etag' => etag, 'modified' => modified}
         dir_state['names'][file_info['name']] = file_info
         dir_state['etags'][file_info['etag']] = file_info
+        dir_state['ids'][file_info['etag']+file_info['name']] = file_info
       end
     end
 
@@ -152,7 +152,7 @@ class S3Bucket
   end
 
   def load_state
-    dir_state = {'names' => {}, 'etags' => {}}
+    dir_state = {'names' => {}, 'etags' => {}, 'ids' => {}}
     begin
       @bucket.objects.each do |obj|
         head = obj.head
@@ -160,6 +160,7 @@ class S3Bucket
         file_info = {'name' => obj.key, 'etag' => etag, 'modified' => head.last_modified} 
         dir_state['names'][file_info['name']] = file_info
         dir_state['etags'][file_info['etag']] = file_info
+        dir_state['ids'][file_info['etag']+file_info['name']] = file_info
       end
     rescue
       puts "Error loading file information from bucket #{@bucket_name}."
@@ -222,19 +223,21 @@ class Dispatcher
     @bucket = bucket
   end
 
-  def update(json_action)
-    action = JSON.parse(json_action)
+  def update(actions)
+    #action = JSON.parse(json_action)
 
-    if action && action['action']
-      #case action['action']
-      #when 'add'
-      #  @bucket.add_file(action['file'])
-      #when 'rename'
-      #  @bucket.rename_file(action['from'], action['to'])
-      #when 'remove'
-      #  @bucket.remove_file(action['name'])
-      #end
-      puts action
+    actions.each do |action|
+      if action['action']
+        #case action['action']
+        #when 'add'
+        #  @bucket.add_file(action['file'])
+        #when 'rename'
+        #  @bucket.rename_file(action['from'], action['to'])
+        #when 'remove'
+        #  @bucket.remove_file(action['name'])
+        #end
+        puts action
+      end
     end
   end
 end
