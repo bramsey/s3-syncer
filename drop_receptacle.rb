@@ -68,11 +68,11 @@ class Watcher
 
       # determine rename actions
       removed_names = difference(prev['names'], curr['names'])
-      new_names = difference(curr['names'], prev['names'])
-      new_name_hashes = new_names.map {|file| file['etag']}
+      new_files = difference(curr['ids'], prev['ids'])
+      new_file_hashes = new_files.map {|file| file['etag']}
       removed_name_hashes = removed_names.map {|file| file['etag']}
-      files_to_rename = new_names.select {|file| removed_name_hashes.include?(file['etag'])}
-      renamed_files = removed_names.select {|file| new_name_hashes.include?(file['etag'])}
+      files_to_rename = new_files.select {|file| removed_name_hashes.include?(file['etag'])}
+      renamed_files = removed_names.select {|file| new_file_hashes.include?(file['etag'])}
       files_to_rename.each do |file|
         old_name = removed_names.select {|old_file| old_file['etag'] == file['etag']}[0]['name']
         new_name = file['name']
@@ -84,7 +84,6 @@ class Watcher
       end
 
       # determine add actions
-      new_files = difference(curr['ids'], prev['ids'])
       files_to_add = new_files - files_to_rename
       files_to_add.each do |file|
         unless File.extname(file['name']) == '.inprog'
