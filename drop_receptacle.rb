@@ -109,9 +109,13 @@ class LocalDirectory
   end
 
   def LocalDirectory.etag_for(file_path)
-    md5_response = %x[md5 #{file_path}]
-    etag = md5_response.split('=')[1]
-    etag = etag && etag.strip
+    if File.exists?(file_path)
+      md5_response = %x[md5 #{file_path}]
+      etag = md5_response.split('=')[1]
+      etag = etag && etag.strip
+    else
+      return nil
+    end
   end
 
   def load_state
@@ -177,8 +181,16 @@ class S3Bucket
     puts "Uploading file #{file_name} to bucket #{@bucket_name}."
     begin
       obj = @bucket.objects[file_name]
-      etag = obj.exists? ? obj.etag : nil
-      unless etag == file_info['etag']
+      if obj.exists?
+        etag = String.class_eval(obj.etag)
+        mtime = obj.last_modified
+      else
+        etag = nil
+        mtime = nil
+      end
+      puts 'hai'
+      puts etag.inspect
+      unless etag == file_info['etag'] || (mtime && mtime >= Time.parse(file_info['modified']))
         begin
             #obj.write(:file => file_name)
             obj = @bucket.objects[file_name + '.inprog']
@@ -207,12 +219,12 @@ class S3Bucket
       obj = @bucket.objects[file_name]
       local_file_path = File.join(Dir.pwd, file_name)
       local_file_etag = LocalDirectory.etag_for(local_file_path)
-      local_file_stats = File.stat(local_file_path)
+      local_file_stats = File.exists?(local_file_path) && File.stat(local_file_path)
       local_file_mtime = local_file_stats && local_file_stats.mtime
 
       unless local_file_etag == file_info['etag'] || (local_file_mtime && local_file_mtime >= Time.parse(file_info['modified']))
         begin
-          temp_file_name = File.join(local_file_path, '.inprog')
+          temp_file_name = local_file_path + '.inprog'
           file = File.open(temp_file_name, 'w')
           obj.read do |chunk|
             file.write(chunk)
@@ -223,6 +235,8 @@ class S3Bucket
         rescue
           puts "Error downloading #{file_name} to local folder #{Dir.pwd}"
         end
+      else
+        puts "file #{file_name} already synced"
       end
     rescue
       puts "Error reading #{file_name} from local folder #{Dir.pwd}"
@@ -289,7 +303,8 @@ end
 load_config
 local_directory = LocalDirectory.new(Dir.pwd)
 bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
-#bucket_state = bucket.load_state.to_json
+local_state = local_directory.load_state
+bucket.add_file(local_state['names']['readme.txt'])
 local_watcher = Watcher.new(local_directory, local_directory.load_state.to_json, 1)
 s3_watcher = Watcher.new(bucket, bucket.load_state.to_json, 1)
 local_dispatcher = Dispatcher.new(local_watcher, bucket)
