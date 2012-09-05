@@ -5,6 +5,7 @@ require 'yaml'
 require 'aws-sdk'
 require 'observer'
 require 'json'
+require 'time'
 
 class Watcher
   include Observable 
@@ -69,9 +70,9 @@ class Watcher
       # determine rename actions
       removed_names = difference(prev['names'], curr['names'])
       new_files = difference(curr['ids'], prev['ids'])
-      new_file_hashes = new_files.map {|file| file['etag']}
       removed_name_hashes = removed_names.map {|file| file['etag']}
       files_to_rename = new_files.select {|file| removed_name_hashes.include?(file['etag'])}
+      new_file_hashes = new_files.map {|file| file['etag']}
       renamed_files = removed_names.select {|file| new_file_hashes.include?(file['etag'])}
       files_to_rename.each do |file|
         old_name = removed_names.select {|old_file| old_file['etag'] == file['etag']}[0]['name']
@@ -97,7 +98,6 @@ class Watcher
         actions.push({'action' => 'remove', 'name' => file['name']})
       end
 
-
       actions
     end
 end
@@ -106,6 +106,12 @@ class LocalDirectory
 
   def initialize(path)
     @dir_path = path
+  end
+
+  def LocalDirectory.etag_for(file_path)
+    md5_response = %x[md5 #{file_path}]
+    etag = md5_response.split('=')[1]
+    etag = etag && etag.strip
   end
 
   def load_state
@@ -117,9 +123,7 @@ class LocalDirectory
     files.each do |file|
       if File.file?(file) && File.readable?(file)
         file_path = Dir.pwd + '/' + file
-        md5_response = %x[md5 #{file_path}]
-        etag = md5_response.split('=')[1]
-        etag = etag ? etag.strip : etag
+        etag = LocalDirectory.etag_for(file_path)
         modified = File.stat(file).mtime
         file_info = {'name' => file, 'etag' => etag, 'modified' => modified}
         dir_state['names'][file_info['name']] = file_info
@@ -196,6 +200,35 @@ class S3Bucket
     end
   end
 
+  def get_file(file_info)
+    file_name = file_info['name']
+    puts "Downloading file #{file_name} to local folder #{Dir.pwd}"
+    begin
+      obj = @bucket.objects[file_name]
+      local_file_path = File.join(Dir.pwd, file_name)
+      local_file_etag = LocalDirectory.etag_for(local_file_path)
+      local_file_stats = File.stat(local_file_path)
+      local_file_mtime = local_file_stats && local_file_stats.mtime
+
+      unless local_file_etag == file_info['etag'] || (local_file_mtime && local_file_mtime >= Time.parse(file_info['modified']))
+        begin
+          temp_file_name = File.join(local_file_path, '.inprog')
+          file = File.open(temp_file_name, 'w')
+          obj.read do |chunk|
+            file.write(chunk)
+          end
+          file.close
+          File.rename(temp_file_name, local_file_path)
+          puts "Done downloading file #{file_name}"
+        rescue
+          puts "Error downloading #{file_name} to local folder #{Dir.pwd}"
+        end
+      end
+    rescue
+      puts "Error reading #{file_name} from local folder #{Dir.pwd}"
+    end
+  end
+
   def rename_file(old_name, new_name)
     begin
       puts "Renaming #{old_name} to #{new_name}"
@@ -258,6 +291,11 @@ local_directory = LocalDirectory.new(Dir.pwd)
 bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
 #bucket_state = bucket.load_state.to_json
 local_watcher = Watcher.new(local_directory, local_directory.load_state.to_json, 1)
-s3_dispatcher = Dispatcher.new(local_watcher, bucket)
+s3_watcher = Watcher.new(bucket, bucket.load_state.to_json, 1)
+local_dispatcher = Dispatcher.new(local_watcher, bucket)
+remote_dispatcher = Dispatcher.new(s3_watcher, local_directory)
 
-local_watcher.run
+local_thread = Thread.new { local_watcher.run }
+#remote_thread = Thread.new { s3_watcher.run }
+local_thread.join
+remote_thread.join
