@@ -9,14 +9,13 @@ require 'time'
 class Watcher
   include Observable 
 
-  def initialize(directory, initial_remote_state, interval)
+  def initialize(directory, interval)
     @watched_directory = directory
-    @initial_state = initial_remote_state || {'names' => {}, 'etags' => {}}
     @interval = interval
   end
 
   def run
-    prev_dir_state = @initial_state
+    prev_dir_state = @watched_directory.load_state
 
     puts "Now watching: #{@watched_directory}"
 
@@ -30,6 +29,17 @@ class Watcher
     end
   end
 
+  # returns an array of the elements in collection not present in other_collection
+  def Watcher.difference(collection, other_collection)
+    if collection.is_a?(Hash) && other_collection.is_a?(Hash)
+      keys = collection.each_key.to_a
+      return keys.reject {|key| other_collection[key]}.map {|key| collection[key]}
+    elsif collection.is_a?(Array) && other_collection.is_a?(Array) 
+      return collection - other_collection
+    end
+    [] # incompatible collections passed
+  end
+
   private
 
     def queue_actions(actions)
@@ -39,16 +49,6 @@ class Watcher
       end
     end
 
-    # returns an array of the elements in collection not present in other_collection
-    def difference(collection, other_collection)
-      if collection.is_a?(Hash) && other_collection.is_a?(Hash)
-        keys = collection.each_key.to_a
-        return keys.reject {|key| other_collection[key]}.map {|key| collection[key]}
-      elsif collection.is_a?(Array) && other_collection.is_a?(Array) 
-        return collection - other_collection
-      end
-      [] # incompatible collections passed
-    end
 
     # returns an array of the elements in collection also present in other_collection
     def intersection(collection, other_collection)
@@ -65,8 +65,8 @@ class Watcher
       actions = []
 
       # determine rename actions
-      removed_names = difference(prev['names'], curr['names'])
-      new_files = difference(curr['ids'], prev['ids'])
+      removed_names = Watcher.difference(prev['names'], curr['names'])
+      new_files = Watcher.difference(curr['ids'], prev['ids'])
       removed_name_hashes = removed_names.map {|file| file['etag']}
       files_to_rename = new_files.select {|file| removed_name_hashes.include?(file['etag'])}
       new_file_hashes = new_files.map {|file| file['etag']}
@@ -340,11 +340,26 @@ def load_config
   Dir.chdir(Dir.pwd + '/' + sync_dir)
 end
 
+# non-destructive sync to ensure equivalent initial states for synced folders
+def initial_sync(local_dir, bucket)
+  local_state = local_dir.load_state
+  bucket_state = bucket.load_state
+
+  files_to_upload = Watcher.difference(local_state['ids'], bucket_state['ids'])
+  files_to_download = Watcher.difference(bucket_state['ids'], local_state['ids'])
+
+  files_to_upload.each {|file| bucket.add_file(file)}
+  files_to_download.each {|file| bucket.get_file(file)}
+end
+
 load_config
 local_directory = LocalDirectory.new(Dir.pwd)
 bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
-local_watcher = Watcher.new(local_directory, local_directory.load_state, 1)
-s3_watcher = Watcher.new(bucket, bucket.load_state, 10)
+
+initial_sync(local_directory, bucket)
+
+local_watcher = Watcher.new(local_directory, 1)
+s3_watcher = Watcher.new(bucket, 10)
 local_dispatcher = LocalDispatcher.new(local_watcher, local_directory, bucket)
 s3_dispatcher = S3Dispatcher.new(s3_watcher, local_directory, bucket)
 
