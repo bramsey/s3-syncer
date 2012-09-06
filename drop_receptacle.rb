@@ -23,6 +23,8 @@ class Watcher
   def run
     prev_dir_state = @initial_state
 
+    puts "Now watching: #{@watched_directory}"
+
     loop do
       curr_dir_state = @watched_directory.load_state
       actions = compare_states(prev_dir_state, curr_dir_state)
@@ -108,6 +110,10 @@ class LocalDirectory
     @dir_path = path
   end
 
+  def to_s
+    @dir_path
+  end
+
   def LocalDirectory.etag_for(file_path)
     if File.exists?(file_path)
       md5_response = %x[md5 #{file_path}]
@@ -140,6 +146,24 @@ class LocalDirectory
 
     dir_state
   end
+
+  def rename_file(old_name, new_name)
+    begin
+      puts "Renaming #{old_name} to #{new_name}"
+      File.rename(old_name, new_name) if File.exists?(old_name)
+    rescue
+      puts "Error renaming #{old_name} to #{new_name}"
+    end
+  end
+
+  def remove_file(file_name)
+    begin
+      puts "Deleting file #{file_name} from folder #{Dir.pwd}"
+      File.delete(file_name) if File.exists?(file_name)
+    rescue
+      puts "Error deleting #{file_name} from bucket #{Dir.pwd}"
+    end
+  end
 end
 
 class S3Bucket
@@ -156,6 +180,10 @@ class S3Bucket
     rescue
       puts "Error loading bucket #{@bucket_name}."
     end
+  end
+
+  def to_s
+    @bucket_name
   end
 
   def load_state
@@ -188,8 +216,6 @@ class S3Bucket
         etag = nil
         mtime = nil
       end
-      puts 'hai'
-      puts etag.inspect
       unless etag == file_info['etag'] || (mtime && mtime >= Time.parse(file_info['modified']))
         begin
             #obj.write(:file => file_name)
@@ -246,7 +272,8 @@ class S3Bucket
   def rename_file(old_name, new_name)
     begin
       puts "Renaming #{old_name} to #{new_name}"
-      @bucket.objects[old_name].move_to(new_name)
+      obj = @bucket.objects[old_name]
+      obj.move_to(new_name) if obj.exists?
     rescue
       puts "Error renaming #{old_name} to #{new_name}"
     end
@@ -255,7 +282,8 @@ class S3Bucket
   def remove_file(file_name)
     begin
       puts "Deleting file #{file_name} from bucket #{@bucket_name}"
-      @bucket.objects[file_name].delete
+      obj = @bucket.objects[file_name]
+      obj.delete if obj.exists?
     rescue
       puts "Error deleting #{file_name} from bucket #{@bucket_name}"
     end
@@ -263,31 +291,48 @@ class S3Bucket
 end
 
 class Dispatcher
-
-  def initialize(watcher, bucket)
+  def initialize(watcher, local_dir, bucket)
     watcher.add_observer(self)
+    @local_dir = local_dir
     @bucket = bucket
   end
+end
 
+class LocalDispatcher < Dispatcher
   def update(actions)
-    #action = JSON.parse(json_action)
-
     actions.each do |action|
       if action['action']
-        #case action['action']
-        #when 'add'
-        #  @bucket.add_file(action['file'])
-        #when 'rename'
-        #  @bucket.rename_file(action['from'], action['to'])
-        #when 'remove'
-        #  @bucket.remove_file(action['name'])
-        #end
-        puts action
+        case action['action']
+        when 'add'
+          @bucket.add_file(action['file'])
+        when 'rename'
+          @bucket.rename_file(action['from'], action['to'])
+        when 'remove'
+          @bucket.remove_file(action['name'])
+        end
+        #puts action
       end
     end
   end
 end
 
+class S3Dispatcher < Dispatcher
+  def update(actions)
+    actions.each do |action|
+      if action['action']
+        case action['action']
+        when 'add'
+          @bucket.get_file(action['file'])
+        when 'rename'
+          @local_dir.rename_file(action['from'], action['to'])
+        when 'remove'
+          @local_dir.remove_file(action['name'])
+        end
+        #puts action
+      end
+    end
+  end
+end
 
 def load_config
   config = YAML.load_file('config.yaml')
@@ -303,14 +348,12 @@ end
 load_config
 local_directory = LocalDirectory.new(Dir.pwd)
 bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
-local_state = local_directory.load_state
-bucket.add_file(local_state['names']['readme.txt'])
 local_watcher = Watcher.new(local_directory, local_directory.load_state.to_json, 1)
-s3_watcher = Watcher.new(bucket, bucket.load_state.to_json, 1)
-local_dispatcher = Dispatcher.new(local_watcher, bucket)
-remote_dispatcher = Dispatcher.new(s3_watcher, local_directory)
+s3_watcher = Watcher.new(bucket, bucket.load_state.to_json, 10)
+local_dispatcher = LocalDispatcher.new(local_watcher, local_directory, bucket)
+s3_dispatcher = S3Dispatcher.new(s3_watcher, local_directory, bucket)
 
+s3_thread = Thread.new { s3_watcher.run }
 local_thread = Thread.new { local_watcher.run }
-#remote_thread = Thread.new { s3_watcher.run }
 local_thread.join
-remote_thread.join
+s3_thread.join
