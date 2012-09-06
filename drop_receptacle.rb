@@ -42,61 +42,49 @@ class Watcher
 
   private
 
-    def queue_actions(actions)
-      unless actions.empty?
-        changed # trigger observer change
-        notify_observers(actions)
+  def queue_actions(actions)
+    unless actions.empty?
+      changed # trigger observer change
+      notify_observers(actions)
+    end
+  end
+
+  def compare_states(prev, curr)
+    actions = []
+
+    # build rename actions
+    removed_names = Watcher.difference(prev['names'], curr['names'])
+    new_files = Watcher.difference(curr['ids'], prev['ids'])
+    removed_name_hashes = removed_names.map {|file| file['etag']}
+    files_to_rename = new_files.select {|file| removed_name_hashes.include?(file['etag'])}
+    new_file_hashes = new_files.map {|file| file['etag']}
+    renamed_files = removed_names.select {|file| new_file_hashes.include?(file['etag'])}
+    files_to_rename.each do |file|
+      old_name = removed_names.select {|old_file| old_file['etag'] == file['etag']}[0]['name']
+      new_name = file['name']
+      unless File.extname(old_name) == '.inprog'
+        actions.push({'action' => 'rename',
+                      'from' => old_name,
+                      'to' => new_name}) 
       end
     end
 
-
-    # returns an array of the elements in collection also present in other_collection
-    def intersection(collection, other_collection)
-      if collection.is_a?(Hash) && other_collection.is_a?(Hash)
-        keys = collection.each_key.to_a
-        return keys.select {|key| other_collection[key]}.map {|key| collection[key]}
-      elsif collection.is_a?(Array) && other_collection.is_a?(Array) 
-        return collection.select {|item| other_collection.include?(item)}
+    # build add actions
+    files_to_add = new_files - files_to_rename
+    files_to_add.each do |file|
+      unless File.extname(file['name']) == '.inprog'
+        actions.push({'action' => 'add', 'file' => file}) 
       end
-      [] # incompatible collections passed
     end
 
-    def compare_states(prev, curr)
-      actions = []
-
-      # determine rename actions
-      removed_names = Watcher.difference(prev['names'], curr['names'])
-      new_files = Watcher.difference(curr['ids'], prev['ids'])
-      removed_name_hashes = removed_names.map {|file| file['etag']}
-      files_to_rename = new_files.select {|file| removed_name_hashes.include?(file['etag'])}
-      new_file_hashes = new_files.map {|file| file['etag']}
-      renamed_files = removed_names.select {|file| new_file_hashes.include?(file['etag'])}
-      files_to_rename.each do |file|
-        old_name = removed_names.select {|old_file| old_file['etag'] == file['etag']}[0]['name']
-        new_name = file['name']
-        unless File.extname(old_name) == '.inprog'
-          actions.push({'action' => 'rename',
-                        'from' => old_name,
-                        'to' => new_name}) 
-        end
-      end
-
-      # determine add actions
-      files_to_add = new_files - files_to_rename
-      files_to_add.each do |file|
-        unless File.extname(file['name']) == '.inprog'
-          actions.push({'action' => 'add', 'file' => file}) 
-        end
-      end
-
-      # determine remove actions
-      files_to_remove = removed_names - renamed_files
-      files_to_remove.each do |file|
-        actions.push({'action' => 'remove', 'name' => file['name']})
-      end
-
-      actions
+    # build remove actions
+    files_to_remove = removed_names - renamed_files
+    files_to_remove.each do |file|
+      actions.push({'action' => 'remove', 'name' => file['name']})
     end
+
+    actions
+  end
 end
 
 class LocalDirectory
@@ -213,15 +201,15 @@ class S3Bucket
       end
       unless etag == file_info['etag'] || (mtime && mtime >= Time.parse(file_info['modified']))
         begin
-            #obj.write(:file => file_name)
-            obj = @bucket.objects[file_name + '.inprog']
-            file = File.open(file_name, 'r')
-            obj.write(:content_length => file.size) do |buffer, bytes|
-              buffer.write(file.read(bytes))
-            end
-            file.close
-            obj.move_to(file_name)
-            puts "Done uploading file #{file_name} to bucket #{@bucket_name}"
+          # use .inprog to prevent trying to sync incomplete files
+          obj = @bucket.objects[file_name + '.inprog']
+          file = File.open(file_name, 'r')
+          obj.write(:content_length => file.size) do |buffer, bytes|
+            buffer.write(file.read(bytes))
+          end
+          file.close
+          obj.move_to(file_name)
+          puts "Done uploading file #{file_name} to bucket #{@bucket_name}"
         rescue
           puts "Error uploading #{file_name} to bucket #{@bucket_name}."
         end
@@ -296,16 +284,13 @@ end
 class LocalDispatcher < Dispatcher
   def update(actions)
     actions.each do |action|
-      if action['action']
-        case action['action']
-        when 'add'
-          @bucket.add_file(action['file'])
-        when 'rename'
-          @bucket.rename_file(action['from'], action['to'])
-        when 'remove'
-          @bucket.remove_file(action['name'])
-        end
-        #puts action
+      case action['action']
+      when 'add'
+        @bucket.add_file(action['file'])
+      when 'rename'
+        @bucket.rename_file(action['from'], action['to'])
+      when 'remove'
+        @bucket.remove_file(action['name'])
       end
     end
   end
@@ -314,16 +299,13 @@ end
 class S3Dispatcher < Dispatcher
   def update(actions)
     actions.each do |action|
-      if action['action']
-        case action['action']
-        when 'add'
-          @bucket.get_file(action['file'])
-        when 'rename'
-          @local_dir.rename_file(action['from'], action['to'])
-        when 'remove'
-          @local_dir.remove_file(action['name'])
-        end
-        #puts action
+      case action['action']
+      when 'add'
+        @bucket.get_file(action['file'])
+      when 'rename'
+        @local_dir.rename_file(action['from'], action['to'])
+      when 'remove'
+        @local_dir.remove_file(action['name'])
       end
     end
   end
@@ -352,18 +334,29 @@ def initial_sync(local_dir, bucket)
   files_to_download.each {|file| bucket.get_file(file)}
 end
 
-load_config
-local_directory = LocalDirectory.new(Dir.pwd)
-bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
+def start
+  load_config
 
-initial_sync(local_directory, bucket)
+  # initialize directory objects
+  local_directory = LocalDirectory.new(Dir.pwd)
+  bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
 
-local_watcher = Watcher.new(local_directory, 1)
-s3_watcher = Watcher.new(bucket, 10)
-local_dispatcher = LocalDispatcher.new(local_watcher, local_directory, bucket)
-s3_dispatcher = S3Dispatcher.new(s3_watcher, local_directory, bucket)
+  # perform initial sync
+  initial_sync(local_directory, bucket)
 
-s3_thread = Thread.new { s3_watcher.run }
-local_thread = Thread.new { local_watcher.run }
-local_thread.join
-s3_thread.join
+  # initialize watchers
+  local_watcher = Watcher.new(local_directory, 1)
+  s3_watcher = Watcher.new(bucket, 10)
+
+  #initialize event dispatchers
+  local_dispatcher = LocalDispatcher.new(local_watcher, local_directory, bucket)
+  s3_dispatcher = S3Dispatcher.new(s3_watcher, local_directory, bucket)
+
+  # start threads
+  s3_thread = Thread.new { s3_watcher.run }
+  local_thread = Thread.new { local_watcher.run }
+  local_thread.join
+  s3_thread.join
+end
+
+start
