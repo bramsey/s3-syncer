@@ -4,7 +4,6 @@ require 'rubygems'
 require 'yaml'
 require 'aws-sdk'
 require 'observer'
-require 'json'
 require 'time'
 
 class Watcher
@@ -12,11 +11,7 @@ class Watcher
 
   def initialize(directory, initial_remote_state, interval)
     @watched_directory = directory
-    begin
-      @initial_state = JSON.parse(initial_remote_state) || {'names' => {}, 'etags' => {}}
-    rescue
-      @initial_state = {'names' => {}, 'etags' => {}, 'ids' => {}}
-    end
+    @initial_state = initial_remote_state || {'names' => {}, 'etags' => {}}
     @interval = interval
   end
 
@@ -348,8 +343,8 @@ end
 load_config
 local_directory = LocalDirectory.new(Dir.pwd)
 bucket = S3Bucket.new(@bucket_name, @access_key_id, @secret_access_key)
-local_watcher = Watcher.new(local_directory, local_directory.load_state.to_json, 1)
-s3_watcher = Watcher.new(bucket, bucket.load_state.to_json, 10)
+local_watcher = Watcher.new(local_directory, local_directory.load_state, 1)
+s3_watcher = Watcher.new(bucket, bucket.load_state, 10)
 local_dispatcher = LocalDispatcher.new(local_watcher, local_directory, bucket)
 s3_dispatcher = S3Dispatcher.new(s3_watcher, local_directory, bucket)
 
