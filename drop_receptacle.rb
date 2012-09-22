@@ -131,21 +131,13 @@ class LocalDirectory
   end
 
   def rename_file(old_name, new_name)
-    begin
-      puts "Renaming #{old_name} to #{new_name}"
-      File.rename(old_name, new_name) if File.exists?(old_name)
-    rescue
-      puts "Error renaming #{old_name} to #{new_name}"
-    end
+    puts "Renaming #{old_name} to #{new_name}"
+    File.rename(old_name, new_name) if File.exists?(old_name)
   end
 
   def remove_file(file_name)
-    begin
-      puts "Deleting file #{file_name} from folder #{Dir.pwd}"
-      File.delete(file_name) if File.exists?(file_name)
-    rescue
-      puts "Error deleting #{file_name} from bucket #{Dir.pwd}"
-    end
+    puts "Deleting file #{file_name} from folder #{Dir.pwd}"
+    File.delete(file_name) if File.exists?(file_name)
   end
 end
 
@@ -158,11 +150,7 @@ class S3Bucket
       'secret_access_key' => secret_access_key
     )
     @s3_instance = AWS::S3.new
-    begin
-      @bucket = @s3_instance.buckets[@bucket_name]
-    rescue
-      puts "Error loading bucket #{@bucket_name}."
-    end
+    @bucket = @s3_instance.buckets[@bucket_name]
   end
 
   def to_s
